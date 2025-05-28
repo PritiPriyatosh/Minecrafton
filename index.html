@@ -1,0 +1,164 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voxel Game Mini-map</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; }
+    #coords {
+      position: fixed; top: 10px; left: 10px;
+      background: rgba(0,0,0,0.6); color: white;
+      padding: 6px 12px; font-family: monospace;
+      font-size: 14px; border-radius: 4px; z-index: 1000;
+    }
+    #minimap {
+      position: fixed; bottom: 10px; right: 10px;
+      background: rgba(0,0,0,0.8); border: 2px solid white;
+      border-radius: 8px; z-index: 1000;
+      touch-action: none;
+    }
+    #toggleMap {
+      position: fixed; bottom: 170px; right: 10px;
+      background: black; color: white;
+      padding: 6px 12px; border-radius: 6px;
+      font-family: monospace; z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+  <div id="coords">X: 0, Y: 0, Z: 0</div>
+  <canvas id="minimap" width="150" height="150"></canvas>
+  <button id="toggleMap">Map</button>
+
+  <script>
+    const coordsDiv = document.getElementById('coords');
+    const minimap = document.getElementById('minimap');
+    const mmCtx = minimap.getContext('2d');
+    const toggleBtn = document.getElementById('toggleMap');
+
+    let currentScale = 4, panOffsetX = 0, panOffsetZ = 0;
+    let isDragging = false, dragStart = { x: 0, y: 0 };
+    let isFullscreen = false;
+
+    const markers = [], pathTrail = [], teammates = [], mobs = [];
+    const world = {
+      getBlockType: (x, y, z) => (x + z) % 2 === 0 ? 'grass' : 'sand',
+      getHeight: (x, z) => Math.sin(x * 0.1) * Math.cos(z * 0.1) * 10 + 20,
+      getBiome: (x, z) => (x + z) % 20 < 10 ? 'Plains' : 'Desert'
+    };
+
+    const player = {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { y: 0 },
+      update() { this.position.x += 0.05; this.position.z += 0.03; this.rotation.y += 0.01; }
+    };
+
+    minimap.addEventListener('wheel', e => {
+      e.preventDefault();
+      currentScale *= e.deltaY < 0 ? 1.1 : 0.9;
+    });
+
+    minimap.addEventListener('mousedown', e => {
+      isDragging = true;
+      dragStart = { x: e.offsetX, y: e.offsetY };
+    });
+    ['mouseup', 'mouseleave'].forEach(ev => minimap.addEventListener(ev, () => isDragging = false));
+    minimap.addEventListener('mousemove', e => {
+      if (!isDragging) return;
+      panOffsetX += (e.offsetX - dragStart.x) / currentScale;
+      panOffsetZ += (e.offsetY - dragStart.y) / currentScale;
+      dragStart = { x: e.offsetX, y: e.offsetY };
+    });
+
+    minimap.addEventListener('click', e => {
+      const rect = minimap.getBoundingClientRect();
+      const mx = (e.clientX - rect.left - minimap.width / 2) / currentScale;
+      const mz = (e.clientY - rect.top - minimap.height / 2) / currentScale;
+      markers.push({ x: player.position.x + mx - panOffsetX, z: player.position.z + mz - panOffsetZ });
+    });
+
+    toggleBtn.addEventListener('click', () => {
+      isFullscreen = !isFullscreen;
+      minimap.width = isFullscreen ? 300 : 150;
+      minimap.height = isFullscreen ? 300 : 150;
+    });
+
+    function updateCoordinates() {
+      const pos = player.position;
+      coordsDiv.innerHTML = `X: ${pos.x.toFixed(1)}, Y: ${pos.y.toFixed(1)}, Z: ${pos.z.toFixed(1)}<br>Chunk: (${Math.floor(pos.x / 16)}, ${Math.floor(pos.z / 16)})`;
+    }
+
+    function drawMinimap() {
+      const centerX = minimap.width / 2;
+      const centerY = minimap.height / 2;
+      mmCtx.clearRect(0, 0, minimap.width, minimap.height);
+      const px = player.position.x, pz = player.position.z;
+
+      pathTrail.push({ x: px, z: pz });
+      if (pathTrail.length > 300) pathTrail.shift();
+
+      const viewSize = 30;
+      for (let dx = -viewSize; dx < viewSize; dx++) {
+        for (let dz = -viewSize; dz < viewSize; dz++) {
+          const wx = Math.floor(px + dx + panOffsetX);
+          const wz = Math.floor(pz + dz + panOffsetZ);
+          const type = world.getBlockType(wx, 0, wz);
+          const height = world.getHeight(wx, wz);
+
+          let color = type === 'grass' ? 'green' : 'yellow';
+          const brightness = Math.floor(255 * (height / 40));
+          mmCtx.fillStyle = `rgb(${brightness},${brightness},${brightness})`;
+          mmCtx.fillRect(centerX + dx * currentScale, centerY + dz * currentScale, currentScale, currentScale);
+
+          if (dx % 20 === 0 && dz % 20 === 0) {
+            mmCtx.fillStyle = 'white';
+            mmCtx.font = '8px monospace';
+            mmCtx.fillText(world.getBiome(wx, wz), centerX + dx * currentScale, centerY + dz * currentScale);
+          }
+        }
+      }
+
+      mmCtx.strokeStyle = 'cyan';
+      mmCtx.beginPath();
+      pathTrail.forEach((p, i) => {
+        const dx = (p.x - px + panOffsetX) * currentScale;
+        const dz = (p.z - pz + panOffsetZ) * currentScale;
+        if (i === 0) mmCtx.moveTo(centerX + dx, centerY + dz);
+        else mmCtx.lineTo(centerX + dx, centerY + dz);
+      });
+      mmCtx.stroke();
+
+      mmCtx.save();
+      mmCtx.translate(centerX, centerY);
+      mmCtx.rotate(player.rotation.y);
+      mmCtx.fillStyle = 'blue';
+      mmCtx.beginPath();
+      mmCtx.moveTo(0, -6);
+      mmCtx.lineTo(5, 5);
+      mmCtx.lineTo(-5, 5);
+      mmCtx.closePath();
+      mmCtx.fill();
+      mmCtx.restore();
+
+      markers.forEach(m => {
+        const dx = (m.x - px + panOffsetX) * currentScale;
+        const dz = (m.z - pz + panOffsetZ) * currentScale;
+        mmCtx.fillStyle = 'white';
+        mmCtx.beginPath();
+        mmCtx.arc(centerX + dx, centerY + dz, 3, 0, 2 * Math.PI);
+        mmCtx.fill();
+      });
+    }
+
+    function gameLoop() {
+      requestAnimationFrame(gameLoop);
+      player.update();
+      updateCoordinates();
+      drawMinimap();
+    }
+    gameLoop();
+  </script>
+</body>
+</html>
